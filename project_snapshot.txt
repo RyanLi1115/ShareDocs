@@ -1,5 +1,5 @@
 Project Snapshot for: /Users/yiranli/Desktop/9900/SDG-Docs
-Generated on: 2025-07-16 02:55:55
+Generated on: 2025-07-16 03:36:55
 ================================================================================
 
 --- FILE: ./README.md ---
@@ -220,19 +220,166 @@ if __name__ == '__main__':
 
 --- FILE: ./server/index.js ---
 
-// server/index.js (最终稳定版)
+// server/index.js (最终业务逻辑版)
 
 import { WebSocketServer } from 'ws';
-import { setupWSConnection } from 'y-websocket/bin/utils';
+import { setupWSConnection, docs } from 'y-websocket/bin/utils';
+
+// ===================================================
+// 在内存中模拟数据库
+// ===================================================
+const users = {}; // { 'username': { password: '...' } }
+const groups = {}; // { 'groupName': { members: Set<string> } }
+const connections = new Map(); // ws -> { username, groupName }
 
 const wss = new WebSocketServer({ port: 1234 });
+console.log('🚀 SDG-Docs WebSocket server running on ws://localhost:1234');
 
-wss.on('connection', (ws, req) => {
-  console.log('✅ Client connected');
-  setupWSConnection(ws, req); // 直接交由 y-websocket 处理所有消息
+// ===================================================
+// WebSocket Server Logic
+// ===================================================
+wss.on('connection', (ws) => {
+  console.log('✅ Client connected.');
+
+  ws.on('message', (message) => {
+    let data;
+    try {
+      data = JSON.parse(message.toString());
+    } catch (e) {
+      // 忽略无法解析的非JSON消息 (很可能是Y.js的二进制消息)
+      return;
+    }
+
+    switch (data.type) {
+      case 'auth':
+        handleAuth(ws, data.payload);
+        break;
+      case 'get_groups':
+        handleGetGroups(ws);
+        break;
+      case 'create_group':
+        handleCreateGroup(ws, data.payload);
+        break;
+      case 'join_group':
+        handleJoinGroup(ws, data.payload);
+        break;
+    }
+  });
+
+  ws.on('close', () => {
+    const connInfo = connections.get(ws);
+    if (connInfo) {
+      console.log(`❌ Client '${connInfo.username}' disconnected.`);
+      // 从小组中移除成员
+      if (connInfo.groupName && groups[connInfo.groupName]) {
+        groups[connInfo.groupName].members.delete(connInfo.username);
+        // 广播用户列表和小组列表的更新
+        setTimeout(() => {
+            broadcastUserList(connInfo.groupName);
+            broadcastGroupListToAll();
+        }, 100);
+      }
+      connections.delete(ws);
+    }
+  });
 });
 
-console.log('🚀 SDG-Docs WebSocket server running on ws://localhost:1234');
+// ===================================================
+// Business Logic Handlers
+// ===================================================
+
+function handleAuth(ws, { action, username, password }) {
+  if (action === 'register') {
+    if (users[username]) {
+      ws.send(JSON.stringify({ type: 'auth_failed', message: 'Username already exists.' }));
+    } else {
+      users[username] = { password };
+      connections.set(ws, { username, groupName: null });
+      ws.send(JSON.stringify({ type: 'auth_success', username }));
+      console.log(`New user registered: ${username}`);
+    }
+  } else if (action === 'login') {
+    if (!users[username]) {
+      ws.send(JSON.stringify({ type: 'auth_failed', message: 'User does not exist.' }));
+    } else if (users[username].password === password) {
+      connections.set(ws, { username, groupName: null });
+      ws.send(JSON.stringify({ type: 'auth_success', username }));
+      console.log(`User logged in: ${username}`);
+    } else {
+      ws.send(JSON.stringify({ type: 'auth_failed', message: 'Invalid password.' }));
+    }
+  }
+}
+
+function handleGetGroups(ws) {
+  const groupData = {};
+  for(const groupName in groups) {
+    groupData[groupName] = Array.from(groups[groupName].members);
+  }
+  ws.send(JSON.stringify({ type: 'groups_list', payload: groupData }));
+}
+
+function handleCreateGroup(ws, { groupName }) {
+    if(groups[groupName]) {
+        ws.send(JSON.stringify({ type: 'group_failed', message: 'Group already exists.' }));
+        return;
+    }
+    groups[groupName] = { members: new Set() };
+    console.log(`Group created: ${groupName}`);
+    broadcastGroupListToAll();
+    ws.send(JSON.stringify({ type: 'group_created', groupName }));
+}
+
+function handleJoinGroup(ws, { groupName, user }) {
+  const connInfo = connections.get(ws);
+  if (!connInfo || !connInfo.username) return;
+
+  // 如果用户之前在别的组，先从旧组里移除
+  if (connInfo.groupName && groups[connInfo.groupName]) {
+    groups[connInfo.groupName].members.delete(connInfo.username);
+    broadcastUserList(connInfo.groupName);
+  }
+
+  connInfo.groupName = groupName;
+  groups[groupName].members.add(connInfo.username);
+
+  setupWSConnection(ws, null, { docName: groupName, gc: true });
+  const doc = docs.get(groupName);
+  if (doc) {
+    doc.awareness.setLocalStateField('user', user);
+  }
+  console.log(`User '${connInfo.username}' joined group: ${groupName}`);
+  broadcastUserList(groupName);
+  broadcastGroupListToAll();
+}
+
+function broadcastUserList(groupName) {
+  const doc = docs.get(groupName);
+  if (!doc) return;
+
+  const onlineUsers = [];
+  doc.awareness.getStates().forEach(state => {
+    if (state.user) onlineUsers.push(state.user);
+  });
+  
+  for (const [socket, conn] of connections.entries()) {
+    if (conn.groupName === groupName && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'presence_update', users: onlineUsers }));
+    }
+  }
+}
+
+function broadcastGroupListToAll() {
+    const groupData = {};
+    for(const groupName in groups) {
+        groupData[groupName] = Array.from(groups[groupName].members);
+    }
+    for (const socket of wss.clients) {
+        if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'groups_list', payload: groupData }));
+        }
+    }
+}
 
 ================================================================================
 
@@ -248,6 +395,7 @@ console.log('🚀 SDG-Docs WebSocket server running on ws://localhost:1234');
     "start": "node index.js"
   },
   "dependencies": {
+    "uuid": "^11.1.0",
     "ws": "^8.17.0",
     "y-websocket": "^2.0.3"
   }
@@ -322,6 +470,7 @@ console.log('🚀 SDG-Docs WebSocket server running on ws://localhost:1234');
     "@tiptap/starter-kit": "2.4.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-router-dom": "^7.6.3",
     "y-websocket": "2.0.3",
     "yjs": "13.6.14"
   },
@@ -338,104 +487,26 @@ console.log('🚀 SDG-Docs WebSocket server running on ws://localhost:1234');
 
 --- FILE: ./client/src/App.tsx ---
 
-// client/src/App.tsx (最终、完整、稳定版 V2)
-
-import { useState, useEffect } from 'react';
-import { Box, CssBaseline, Paper } from '@mui/material';
-import AppHeader from './components/AppHeader';
-import EditorToolbar from './components/EditorToolbar';
-import TiptapEditor from './components/TiptapEditor';
-import './styles/editor.css';
-
-import { ydoc, provider } from './lib/yjs';
-
-// TipTap and Y.js imports
-import { useEditor } from '@tiptap/react';
-import { StarterKit } from '@tiptap/starter-kit';
-import Collaboration from '@tiptap/extension-collaboration';
-import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
-import Underline from '@tiptap/extension-underline';
-import TextAlign from '@tiptap/extension-text-align';
-import Link from '@tiptap/extension-link';
-
-// 1. 定义统一的用户接口
-interface OnlineUser {
-  id: number;
-  name: string;
-  color: string;
-}
-
-// Helper functions for user simulation
-const userColors = ['#F44336', '#9C27B0', '#3F51B5', '#03A9F4', '#009688', '#8BC34A', '#FFC107', '#FF5722'];
-const userNames = ['Alex', 'Jordan', 'Taylor', 'Morgan', 'Casey', 'Jamie', 'Riley', 'Peyton'];
-const getRandomElement = (list: string[]) => list[Math.floor(Math.random() * list.length)];
-
-// 2. 创建当前用户时，也遵循这个接口 (id 是 Y.js 内部的 clientID，会自动分配)
-const currentUser = {
-  name: getRandomElement(userNames),
-  color: getRandomElement(userColors),
-};
+// client/src/App.tsx
+import { useState } from 'react';
+import { useApp } from './context/AppContext';
+import { AuthPage } from './pages/AuthPage';
+import { GroupPage } from './pages/GroupPage';
+import { EditorPage } from './pages/EditorPage';
 
 function App() {
-  const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
+  const { authState, username } = useApp();
+  const [currentGroup, setCurrentGroup] = useState<string | null>(null);
 
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({ history: false }),
-      Underline,
-      TextAlign.configure({ types: ['heading', 'paragraph'] }),
-      Link.configure({ openOnClick: true, autolink: true }),
-      Collaboration.configure({ document: ydoc }),
-      CollaborationCursor.configure({
-        provider: provider,
-        user: currentUser,
-      }),
-    ],
-    editorProps: {
-        attributes: {
-          class: 'prosemirror',
-        },
-      },
-  });
+  if (authState === 'LOGGED_OUT') {
+    return <AuthPage />;
+  }
+  
+  if (!currentGroup) {
+    return <GroupPage username={username} onJoinGroup={setCurrentGroup} />;
+  }
 
-  // 这个 useEffect 现在会生成正确格式的用户列表
-  useEffect(() => {
-    if (!provider) return;
-    const awareness = provider.awareness;
-
-    const updateUsers = () => {
-      // awareness.getStates() 返回一个 Map(clientID => state)
-      const states = Array.from(awareness.getStates().entries());
-      const users: OnlineUser[] = states
-        // 3. 将 [clientID, state] 映射为 { id, name, color } 的标准格式
-        .map(([clientID, state]) => ({
-          id: clientID,
-          name: state.user?.name || 'Anonymous', // 添加默认值以防万一
-          color: state.user?.color || '#000000',
-        }));
-      setOnlineUsers(users);
-    };
-
-    awareness.on('change', updateUsers);
-    updateUsers(); // Initial load
-
-    return () => {
-      awareness.off('change', updateUsers);
-    };
-  }, []);
-
-  return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-      <CssBaseline />
-      <AppHeader onlineUsers={onlineUsers} />
-      <EditorToolbar editor={editor} />
-      <Box sx={{ flexGrow: 1, overflowY: 'auto', backgroundColor: 'background.default', padding: { xs: 2, md: 4 }, display: 'flex', justifyContent: 'center' }}>
-        <Paper elevation={2} sx={{ width: '816px', minHeight: '1122px', padding: { xs: 4, sm: 8, md: 12 }, flexShrink: 0 }}>
-          <TiptapEditor editor={editor} />
-        </Paper>
-      </Box>
-    </Box>
-  );
+  return <EditorPage groupName={currentGroup} username={username} />;
 }
 
 export default App;
@@ -445,16 +516,140 @@ export default App;
 --- FILE: ./client/src/main.tsx ---
 
 // client/src/main.tsx
-import ReactDOM from 'react-dom/client'
-import App from './App.tsx'
-import { ThemeProvider } from '@mui/material/styles';
+import ReactDOM from 'react-dom/client';
+import App from './App.tsx';
+import { AppProvider } from './context/AppContext';
+import { CssBaseline, ThemeProvider } from '@mui/material';
 import theme from './styles/theme';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <ThemeProvider theme={theme}>
-    <App />
-  </ThemeProvider>
-)
+  <AppProvider>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <App />
+    </ThemeProvider>
+  </AppProvider>
+);
+
+================================================================================
+
+--- FILE: ./client/src/context/AppContext.tsx ---
+
+// client/src/context/AppContext.tsx
+
+import { createContext, useContext, useState, useRef, useEffect, useCallback } from 'react';
+
+// 定义小组列表的数据结构
+type Groups = Record<string, string[]>;
+
+interface AppContextType {
+  ws: WebSocket | null;
+  authState: 'LOGGED_OUT' | 'LOGGED_IN';
+  username: string;
+  groups: Groups; // 添加 groups 到 context 类型
+  login: (user: string, pass: string) => void;
+  register: (user: string, pass: string) => void;
+  logout: () => void;
+  getGroups: () => void; // 添加 getGroups 函数到类型
+  createGroup: (groupName: string) => void;
+  joinGroup: (groupName: string, user: { name: string, color: string }) => void;
+}
+
+const AppContext = createContext<AppContextType | null>(null);
+
+export const AppProvider = ({ children }) => {
+  const [authState, setAuthState] = useState<'LOGGED_OUT' | 'LOGGED_IN'>('LOGGED_OUT');
+  const [username, setUsername] = useState('');
+  const [groups, setGroups] = useState<Groups>({}); // 1. 将 groups 状态移到这里
+  const ws = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    const socket = new WebSocket('ws://localhost:1234');
+    ws.current = socket;
+    
+    socket.onopen = () => console.log('WebSocket Connected');
+    socket.onclose = () => {
+      console.log('WebSocket Disconnected');
+      setAuthState('LOGGED_OUT');
+      setUsername('');
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data.toString());
+        console.log("Received message:", data.type);
+
+        switch (data.type) {
+          case 'auth_success':
+            setUsername(data.username);
+            setAuthState('LOGGED_IN');
+            break;
+          case 'auth_failed':
+            alert(`Auth Failed: ${data.message}`);
+            break;
+          case 'groups_list': // 2. 在这里统一处理 groups_list 消息
+            setGroups(data.payload || {}); // 使用 || {} 来防止 null
+            break;
+          case 'group_failed':
+            alert(`Group action failed: ${data.message}`);
+            break;
+        }
+      } catch (e) { /* 忽略非JSON消息 */ }
+    };
+
+    return () => {
+      socket.close();
+    };
+  }, []);
+
+  const login = (user: string, pass: string) => {
+    ws.current?.send(JSON.stringify({ type: 'auth', payload: { action: 'login', username: user, password: pass } }));
+  };
+  
+  const register = (user: string, pass: string) => {
+    ws.current?.send(JSON.stringify({ type: 'auth', payload: { action: 'register', username: user, password: pass } }));
+  };
+
+  const logout = () => {
+    window.location.reload();
+  };
+  
+  // 3. 将获取、创建、加入小组的函数也定义在这里
+  const getGroups = useCallback(() => {
+    ws.current?.send(JSON.stringify({ type: 'get_groups' }));
+  }, []);
+
+  const createGroup = useCallback((groupName: string) => {
+    ws.current?.send(JSON.stringify({ type: 'create_group', payload: { groupName } }));
+  }, []);
+
+  const joinGroup = useCallback((groupName: string, user: { name: string, color: string }) => {
+    ws.current?.send(JSON.stringify({ type: 'join_group', payload: { groupName, user } }));
+  }, []);
+
+  const value = { 
+    ws: ws.current, 
+    authState, 
+    username, 
+    groups, // 4. 将 groups 和相关函数传给所有子组件
+    login, 
+    register, 
+    logout,
+    getGroups,
+    createGroup,
+    joinGroup,
+  };
+
+  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+};
+
+export const useApp = (): AppContextType => {
+  const context = useContext(AppContext);
+  if (!context) {
+    throw new Error('useApp must be used within an AppProvider');
+  }
+  return context;
+};
 
 ================================================================================
 
@@ -464,10 +659,15 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 
 /* --- Base Editor Styles --- */
 
-.ProseMirror {
-  min-height: 200px;
-  border: 1px solid #ccc;
-  padding: 1rem;
+/* client/src/styles/editor.css */
+
+.ProseMirror:focus {
+  /* 移除蓝色边框 */
+  border-color: transparent; 
+  /* 移除默认的 outline */
+  outline: none;
+  /* 用一个更柔和的阴影来表示焦点状态，符合 M3 规范 */
+  box-shadow: 0 0 0 2px #4285F4;
 }
 
 .ProseMirror:focus {
@@ -719,52 +919,26 @@ export default TiptapEditor;
 --- FILE: ./client/src/components/AppHeader.tsx ---
 
 // client/src/components/AppHeader.tsx
-
 import { AppBar, Toolbar, Typography, Box, Avatar, Tooltip } from '@mui/material';
 
-// 1. 定义与 App.tsx 一致的用户接口
-interface OnlineUser {
-  id: number;
-  name: string;
-  color: string;
+export default function AppHeader({ onlineUsers }) {
+    return (
+        <AppBar position="sticky" elevation={0} sx={{ backgroundColor: 'background.paper', borderBottom: '1px solid', borderColor: 'divider' }}>
+            <Toolbar sx={{ height: '64px' }}>
+                <Typography variant="h6" sx={{ flexGrow: 1 }}>SDG-Docs</Typography>
+                <Box display="flex" gap={1}>
+                    {onlineUsers.map(user => (
+                        <Tooltip key={user.name} title={user.name}>
+                            <Avatar sx={{ bgcolor: user.color, width: 32, height: 32 }}>
+                                {user.name.charAt(0).toUpperCase()}
+                            </Avatar>
+                        </Tooltip>
+                    ))}
+                </Box>
+            </Toolbar>
+        </AppBar>
+    );
 }
-
-interface AppHeaderProps {
-  onlineUsers: OnlineUser[];
-}
-
-const AppHeader = ({ onlineUsers }: AppHeaderProps) => {
-  return (
-    <AppBar
-      position="sticky"
-      elevation={0}
-      sx={{
-        backgroundColor: 'background.paper',
-        borderBottom: '1px solid',
-        borderColor: 'divider',
-      }}
-    >
-      <Toolbar sx={{ height: '64px' }}>
-        <Typography variant="h6" component="div" sx={{ flexGrow: 1, fontWeight: 400, fontSize: '22px' }}>
-          SDG-Docs
-        </Typography>
-        
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          {onlineUsers.map((user) => (
-            // 2. 使用 user.id, user.name, 和 user.color
-            <Tooltip key={user.id} title={user.name}>
-              <Avatar sx={{ bgcolor: user.color, width: 32, height: 32, fontSize: '16px' }}>
-                {user.name.charAt(0).toUpperCase()}
-              </Avatar>
-            </Tooltip>
-          ))}
-        </Box>
-      </Toolbar>
-    </AppBar>
-  );
-};
-
-export default AppHeader;
 
 ================================================================================
 
@@ -776,17 +950,239 @@ export default AppHeader;
 
 --- FILE: ./client/src/lib/yjs.ts ---
 
-// client/src/lib/yjs.ts (最终稳定版)
+// client/src/lib/yjs.ts
+
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 
-export const ydoc = new Y.Doc();
+// 定义一个函数来设置协同环境
+export const setupCollaboration = (roomName: string) => {
+  const ydoc = new Y.Doc();
+  const provider = new WebsocketProvider(
+    'ws://localhost:1234',
+    roomName,
+    ydoc
+  );
 
-export const provider = new WebsocketProvider(
-  'ws://localhost:1234',
-  'sdg-docs-room-final',
-  ydoc
-);
+  // 返回一个 Promise，它将在连接成功后解析
+  return new Promise<{ ydoc: Y.Doc; provider: WebsocketProvider }>((resolve) => {
+    // 监听 provider 的状态变化
+    provider.on('status', (event: { status: string }) => {
+      // 当状态变为 "connected" 时，Promise 成功，并返回 ydoc 和 provider
+      if (event.status === 'connected') {
+        console.log(`✅ Y.js Provider connected to room: ${roomName}`);
+        resolve({ ydoc, provider });
+      }
+    });
+  });
+};
+
+================================================================================
+
+--- FILE: ./client/src/pages/EditorPage.tsx ---
+
+// client/src/pages/EditorPage.tsx
+import { useState, useEffect, useMemo } from 'react';
+import { Box, Paper, Typography } from '@mui/material';
+import AppHeader from '../components/AppHeader';
+import EditorToolbar from '../components/EditorToolbar';
+import TiptapEditor from '../components/TiptapEditor';
+
+import * as Y from 'yjs';
+import { WebsocketProvider } from 'y-websocket';
+import { useEditor, Editor } from '@tiptap/react';
+import { StarterKit } from '@tiptap/starter-kit';
+import Collaboration from '@tiptap/extension-collaboration';
+import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
+import Underline from '@tiptap/extension-underline';
+
+// 定义用户和 props 的类型
+interface OnlineUser {
+    name: string;
+    color: string;
+}
+
+interface EditorPageProps {
+  groupName: string;
+  username: string;
+}
+
+export const EditorPage = ({ groupName, username }: EditorPageProps) => {
+  const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
+  
+  // 使用 useMemo 来创建和缓存 ydoc, provider, 和 editor 实例
+  // 它们只会在 groupName 或 username 改变时重新创建
+  const editor = useMemo(() => {
+    const ydoc = new Y.Doc();
+    const provider = new WebsocketProvider('ws://localhost:1234', groupName, ydoc);
+    const userColor = ['#F44336', '#9C27B0', '#3F51B5', '#03A9F4'][Math.floor(Math.random() * 4)];
+    const currentUser = { name: username, color: userColor };
+
+    provider.awareness.setLocalStateField('user', currentUser);
+
+    const editorInstance = new Editor({
+        extensions: [
+            StarterKit.configure({ history: false }),
+            Underline,
+            Collaboration.configure({ document: ydoc }),
+            CollaborationCursor.configure({ provider: provider, user: currentUser }),
+        ],
+    });
+
+    const awareness = provider.awareness;
+    const updateUsers = () => {
+        const users = Array.from(awareness.getStates().values()).map(state => state.user);
+        setOnlineUsers(users.filter(Boolean) as OnlineUser[]);
+    };
+
+    awareness.on('change', updateUsers);
+    updateUsers(); // 立即获取一次
+
+    // 返回 editor 实例和清理函数
+    return {
+        instance: editorInstance,
+        cleanup: () => {
+            awareness.off('change', updateUsers);
+            provider.destroy();
+            editorInstance.destroy();
+        }
+    };
+  }, [groupName, username]);
+
+  // 使用 useEffect 来处理组件卸载时的清理工作
+  useEffect(() => {
+    return () => {
+        editor.cleanup();
+    };
+  }, [editor]);
+
+  if (!editor.instance) {
+      return <Typography>Loading Editor...</Typography>;
+  }
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+      <AppHeader onlineUsers={onlineUsers.filter(u => u.name !== username)} />
+      <EditorToolbar editor={editor.instance} />
+      <Box sx={{ flexGrow: 1, overflowY: 'auto', backgroundColor: 'background.default', padding: { xs: 2, md: 4 }, display: 'flex', justifyContent: 'center' }}>
+        <Paper elevation={2} sx={{ width: '816px', minHeight: '1122px', padding: { xs: 4, sm: 8, md: 12 }, flexShrink: 0 }}>
+          <TiptapEditor editor={editor.instance} />
+        </Paper>
+      </Box>
+    </Box>
+  );
+};
+
+================================================================================
+
+--- FILE: ./client/src/pages/GroupPage.tsx ---
+
+// client/src/pages/GroupPage.tsx
+
+import { useState, useEffect, useCallback } from 'react';
+import { useApp } from '../context/AppContext';
+import { Box, TextField, Button, Typography, Paper, List, ListItemButton, ListItemText, Divider, Accordion, AccordionSummary, AccordionDetails } from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+
+interface GroupPageProps {
+  username: string;
+  onJoinGroup: (groupName: string) => void;
+}
+
+export const GroupPage = ({ username, onJoinGroup }: GroupPageProps) => {
+  // 从全局 context 获取所需的一切。
+  // groups 状态现在由 AppContext 统一管理和更新。
+  const { groups, getGroups, createGroup, logout } = useApp();
+  const [newGroupName, setNewGroupName] = useState('');
+
+  // 页面加载时，通过 context 的函数请求一次小组列表。
+  // AppContext 中的 onmessage 会负责接收并更新 groups 状态。
+  useEffect(() => {
+    getGroups();
+  }, [getGroups]);
+
+  // handleCreateAndJoin 函数保持不变
+  const handleCreateAndJoin = () => {
+    if (!newGroupName.trim()) {
+      alert("Group name cannot be empty.");
+      return;
+    }
+    createGroup(newGroupName);
+    onJoinGroup(newGroupName);
+  }
+
+  return (
+    <Box display="flex" justifyContent="center" alignItems="center" height="100vh" bgcolor="background.default">
+      <Paper elevation={3} sx={{ padding: 4, width: 500, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <Box display="flex" justifyContent="space-between" alignItems="center">
+          <Typography variant="h5">Welcome, {username}!</Typography>
+          <Button onClick={logout}>Logout</Button>
+        </Box>
+        <Typography variant="h6">Existing Groups</Typography>
+        <Box sx={{ maxHeight: 300, overflow: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+          {/* 这里现在可以安全地渲染从 context 传来的 groups */}
+          {Object.keys(groups).length > 0 ? Object.entries(groups).map(([name, members]: [string, string[]]) => (
+            <Accordion key={name} TransitionProps={{ unmountOnExit: true }}>
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography sx={{ flexGrow: 1 }}>{name}</Typography>
+                <Button size="small" variant="outlined" onClick={(e) => { e.stopPropagation(); onJoinGroup(name); }}>Join</Button>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Typography variant="subtitle2" gutterBottom>Members ({members.length}):</Typography>
+                <List dense>
+                  {/* 确保 members 是一个数组 */}
+                  {Array.isArray(members) && members.map(member => <ListItemText key={member} primary={`- ${member}`} />)}
+                </List>
+              </AccordionDetails>
+            </Accordion>
+          )) : <Typography color="textSecondary" sx={{p: 2}}>No groups found. Create one!</Typography>}
+        </Box>
+        <Divider>OR CREATE NEW</Divider>
+        <Box display="flex" gap={2}>
+          <TextField label="New Group Name" fullWidth value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} />
+          <Button variant="contained" onClick={handleCreateAndJoin} disabled={!newGroupName}>Create & Join</Button>
+        </Box>
+      </Paper>
+    </Box>
+  );
+};
+
+================================================================================
+
+--- FILE: ./client/src/pages/AuthPage.tsx ---
+
+// client/src/pages/AuthPage.tsx
+import { useState } from 'react';
+import { useApp } from '../context/AppContext';
+import { Box, TextField, Button, Typography, Paper, Tabs, Tab } from '@mui/material';
+
+export const AuthPage = () => {
+  const { login, register } = useApp(); // 从 context 获取函数
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [tab, setTab] = useState(0);
+
+  const action = tab === 0 ? 'login' : 'register';
+
+  // 我们不再需要在这里监听 onmessage
+
+  return (
+    <Box display="flex" justifyContent="center" alignItems="center" height="100vh" bgcolor="background.default">
+      <Paper elevation={3} sx={{ padding: 4, width: 400, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <Typography variant="h4" component="h1" gutterBottom textAlign="center">SDG-Docs</Typography>
+        <Tabs value={tab} onChange={(_event, newValue) => setTab(newValue)} centered>
+            <Tab label="Login" />
+            <Tab label="Register" />
+        </Tabs>
+        <TextField label="Username" fullWidth value={username} onChange={(e) => setUsername(e.target.value)} />
+        <TextField label="Password" type="password" fullWidth value={password} onChange={(e) => setPassword(e.target.value)} />
+        <Button variant="contained" size="large" onClick={() => (tab === 0 ? login(username, password) : register(username, password))} disabled={!username || !password}>
+          {action === 'login' ? 'Login' : 'Register'}
+        </Button>
+      </Paper>
+    </Box>
+  );
+};
 
 ================================================================================
 

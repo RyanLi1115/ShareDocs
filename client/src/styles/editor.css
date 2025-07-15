@@ -2,10 +2,15 @@
 
 /* --- Base Editor Styles --- */
 
-.ProseMirror {
-  min-height: 200px;
-  border: 1px solid #ccc;
-  padding: 1rem;
+/* client/src/styles/editor.css */
+
+.ProseMirror:focus {
+  /* 移除蓝色边框 */
+  border-color: transparent; 
+  /* 移除默认的 outline */
+  outline: none;
+  /* 用一个更柔和的阴影来表示焦点状态，符合 M3 规范 */
+  box-shadow: 0 0 0 2px #4285F4;
 }
 
 .ProseMirror:focus {

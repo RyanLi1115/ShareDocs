@@ -1,0 +1,50 @@
+/* client/src/styles/editor.css (用户名标签一直可见的版本) */
+
+/* --- Base Editor Styles --- */
+
+.ProseMirror {
+  min-height: 200px;
+  border: 1px solid #ccc;
+  padding: 1rem;
+}
+
+.ProseMirror:focus {
+  outline: none;
+}
+
+.ProseMirror > * + * {
+  margin-top: 0.75em;
+}
+
+/* --- Collaboration Cursor Customization --- */
+
+.collaboration-cursor__caret {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 1px solid var(--collaboration-cursor-color);
+  border-right: 1px solid var(--collaboration-cursor-color);
+  word-break: normal;
+  pointer-events: none;
+}
+
+.collaboration-cursor__label {
+  position: absolute;
+  top: -1.4em;
+  left: -1px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: normal;
+  user-select: none;
+  pointer-events: none;
+  white-space: nowrap;
+
+  color: white;
+  background-color: var(--collaboration-cursor-color);
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+
+  /* 核心修改：让标签一直可见，移除动画 */
+  opacity: 1;
+}

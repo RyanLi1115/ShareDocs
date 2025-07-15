@@ -1,0 +1,792 @@
+Project Snapshot for: /Users/yiranli/Desktop/9900/SDG-Docs
+Generated on: 2025-07-16 02:55:55
+================================================================================
+
+--- FILE: ./README.md ---
+
+# SDG-Docs
+
+This is a local-first, real-time collaborative document editor built to enterprise standards.
+
+## How to Run
+
+1.  **Install Dependencies:**
+    ```bash
+    # using pnpm (recommended)
+    pnpm install:all
+    ```
+
+2.  **Run the application (Server + Client):**
+    ```bash
+    pnpm run dev:concurrently
+    ```
+
+This will start the WebSocket server and the React client application. Open multiple browser tabs to `http://localhost:5173` to simulate multi-user collaboration.
+
+
+================================================================================
+
+--- FILE: ./.gitignore ---
+
+# Dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# Build artifacts
+/dist
+/build
+/.vite
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE / OS files
+.DS_Store
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+
+================================================================================
+
+--- FILE: ./package.json ---
+
+{
+  "name": "sdg-docs",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local real-time collaborative document editor",
+  "scripts": {
+    "dev": "pnpm --filter client dev",
+    "server": "pnpm --filter server start",
+    "dev:concurrently": "pnpm install && concurrently \"pnpm run server\" \"pnpm run dev\"",
+    "install:all": "pnpm install && pnpm --filter client install && pnpm --filter server install"
+  },
+  "keywords": [
+    "crdt",
+    "yjs",
+    "collaboration",
+    "react",
+    "tiptap"
+  ],
+  "author": "",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
+
+
+================================================================================
+
+--- FILE: ./create_snapshot.py ---
+
+# create_snapshot.py
+
+import os
+import datetime
+
+# --- 配置 ---
+# 要扫描的根文件夹 ( '.' 代表当前文件夹)
+ROOT_DIR = '.'
+# 输出文件的名称
+OUTPUT_FILE = 'project_snapshot.txt'
+# 要完全忽略的文件夹名称列表
+IGNORE_DIRS = {
+    'node_modules',
+    '.git',
+    '.vscode',
+    '.idea',
+    'dist',
+    'build',
+    '__pycache__',
+}
+# 要忽略的特定文件名称列表
+IGNORE_FILES = {
+    '.DS_Store',
+    'project_snapshot.txt', # 忽略脚本自己生成的输出文件
+}
+# 要忽略的文件扩展名列表 (主要是二进制文件或非文本文件)
+IGNORE_EXTS = {
+    '.png',
+    '.jpg',
+    '.jpeg',
+    '.gif',
+    '.svg',
+    '.ico',
+    '.woff',
+    '.woff2',
+    '.ttf',
+    '.eot',
+    '.otf',
+    '.mp3',
+    '.mp4',
+    '.zip',
+    '.gz',
+    '.lock', # 比如 package-lock.json
+    '.yaml'  # 比如 pnpm-lock.yaml
+}
+
+def create_project_snapshot():
+    """
+    遍历指定目录，将所有文本文件的路径和内容写入一个单一的输出文件。
+    """
+    # 使用 'w' 模式打开文件，意味着每次运行都会覆盖旧文件
+    # 使用 utf-8 编码来处理各种字符
+    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+        # 写入文件头信息
+        f.write(f"Project Snapshot for: {os.path.abspath(ROOT_DIR)}\n")
+        f.write(f"Generated on: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write("="*80 + "\n\n")
+
+        # os.walk 会递归地遍历所有子文件夹
+        for dirpath, dirnames, filenames in os.walk(ROOT_DIR, topdown=True):
+            
+            # --- 忽略指定的文件夹 ---
+            # 我们需要修改 dirnames 列表来阻止 os.walk 进入这些文件夹
+            # 使用列表推导式来创建一个不包含被忽略目录的新列表
+            dirnames[:] = [d for d in dirnames if d not in IGNORE_DIRS]
+
+            for filename in filenames:
+                # --- 忽略指定的文件和扩展名 ---
+                if filename in IGNORE_FILES:
+                    continue
+                
+                # 分离文件名和扩展名
+                _, file_ext = os.path.splitext(filename)
+                if file_ext in IGNORE_EXTS:
+                    continue
+
+                # 构造完整的文件路径
+                file_path = os.path.join(dirpath, filename)
+                
+                # 写入文件路径作为标题
+                f.write(f"--- FILE: {file_path} ---\n\n")
+
+                try:
+                    # 读取文件内容并写入
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as content_file:
+                        content = content_file.read()
+                        f.write(content)
+                except Exception as e:
+                    # 如果读取文件时发生错误（例如，它是一个意料之外的二进制文件）
+                    f.write(f"[Error reading file: {e}]")
+                
+                # 在每个文件内容后添加分隔符，使其更易读
+                f.write("\n\n" + "="*80 + "\n\n")
+
+    print(f"✅ Project snapshot saved to '{OUTPUT_FILE}'")
+
+if __name__ == '__main__':
+    create_project_snapshot()
+
+================================================================================
+
+--- FILE: ./tsconfig.json ---
+
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["client/src"]
+}
+
+
+================================================================================
+
+--- FILE: ./server/index.js ---
+
+// server/index.js (最终稳定版)
+
+import { WebSocketServer } from 'ws';
+import { setupWSConnection } from 'y-websocket/bin/utils';
+
+const wss = new WebSocketServer({ port: 1234 });
+
+wss.on('connection', (ws, req) => {
+  console.log('✅ Client connected');
+  setupWSConnection(ws, req); // 直接交由 y-websocket 处理所有消息
+});
+
+console.log('🚀 SDG-Docs WebSocket server running on ws://localhost:1234');
+
+================================================================================
+
+--- FILE: ./server/package.json ---
+
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "Local WebSocket signaling server for SDG-Docs",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "ws": "^8.17.0",
+    "y-websocket": "^2.0.3"
+  }
+}
+
+================================================================================
+
+--- FILE: ./client/index.html ---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap"
+    />
+    <title>SDG-Docs</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
+
+================================================================================
+
+--- FILE: ./client/package.json ---
+
+{
+  "name": "client",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --force",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.11.4",
+    "@emotion/styled": "^11.11.5",
+    "@mui/icons-material": "^5.15.19",
+    "@mui/material": "^5.15.19",
+    "@tiptap/core": "2.4.0",
+    "@tiptap/extension-blockquote": "2.4.0",
+    "@tiptap/extension-bold": "2.4.0",
+    "@tiptap/extension-bullet-list": "2.4.0",
+    "@tiptap/extension-code-block": "2.4.0",
+    "@tiptap/extension-collaboration": "2.4.0",
+    "@tiptap/extension-collaboration-cursor": "2.4.0",
+    "@tiptap/extension-document": "2.4.0",
+    "@tiptap/extension-dropcursor": "2.4.0",
+    "@tiptap/extension-gapcursor": "2.4.0",
+    "@tiptap/extension-heading": "2.4.0",
+    "@tiptap/extension-history": "2.4.0",
+    "@tiptap/extension-horizontal-rule": "2.4.0",
+    "@tiptap/extension-italic": "2.4.0",
+    "@tiptap/extension-link": "2.4.0",
+    "@tiptap/extension-list-item": "2.4.0",
+    "@tiptap/extension-ordered-list": "2.4.0",
+    "@tiptap/extension-paragraph": "2.4.0",
+    "@tiptap/extension-strike": "2.4.0",
+    "@tiptap/extension-text": "2.4.0",
+    "@tiptap/extension-text-align": "2.4.0",
+    "@tiptap/extension-underline": "2.4.0",
+    "@tiptap/pm": "2.4.0",
+    "@tiptap/react": "2.4.0",
+    "@tiptap/starter-kit": "2.4.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "y-websocket": "2.0.3",
+    "yjs": "13.6.14"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "vite": "^7.0.4"
+  }
+}
+
+
+================================================================================
+
+--- FILE: ./client/src/App.tsx ---
+
+// client/src/App.tsx (最终、完整、稳定版 V2)
+
+import { useState, useEffect } from 'react';
+import { Box, CssBaseline, Paper } from '@mui/material';
+import AppHeader from './components/AppHeader';
+import EditorToolbar from './components/EditorToolbar';
+import TiptapEditor from './components/TiptapEditor';
+import './styles/editor.css';
+
+import { ydoc, provider } from './lib/yjs';
+
+// TipTap and Y.js imports
+import { useEditor } from '@tiptap/react';
+import { StarterKit } from '@tiptap/starter-kit';
+import Collaboration from '@tiptap/extension-collaboration';
+import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
+import Underline from '@tiptap/extension-underline';
+import TextAlign from '@tiptap/extension-text-align';
+import Link from '@tiptap/extension-link';
+
+// 1. 定义统一的用户接口
+interface OnlineUser {
+  id: number;
+  name: string;
+  color: string;
+}
+
+// Helper functions for user simulation
+const userColors = ['#F44336', '#9C27B0', '#3F51B5', '#03A9F4', '#009688', '#8BC34A', '#FFC107', '#FF5722'];
+const userNames = ['Alex', 'Jordan', 'Taylor', 'Morgan', 'Casey', 'Jamie', 'Riley', 'Peyton'];
+const getRandomElement = (list: string[]) => list[Math.floor(Math.random() * list.length)];
+
+// 2. 创建当前用户时，也遵循这个接口 (id 是 Y.js 内部的 clientID，会自动分配)
+const currentUser = {
+  name: getRandomElement(userNames),
+  color: getRandomElement(userColors),
+};
+
+function App() {
+  const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
+
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({ history: false }),
+      Underline,
+      TextAlign.configure({ types: ['heading', 'paragraph'] }),
+      Link.configure({ openOnClick: true, autolink: true }),
+      Collaboration.configure({ document: ydoc }),
+      CollaborationCursor.configure({
+        provider: provider,
+        user: currentUser,
+      }),
+    ],
+    editorProps: {
+        attributes: {
+          class: 'prosemirror',
+        },
+      },
+  });
+
+  // 这个 useEffect 现在会生成正确格式的用户列表
+  useEffect(() => {
+    if (!provider) return;
+    const awareness = provider.awareness;
+
+    const updateUsers = () => {
+      // awareness.getStates() 返回一个 Map(clientID => state)
+      const states = Array.from(awareness.getStates().entries());
+      const users: OnlineUser[] = states
+        // 3. 将 [clientID, state] 映射为 { id, name, color } 的标准格式
+        .map(([clientID, state]) => ({
+          id: clientID,
+          name: state.user?.name || 'Anonymous', // 添加默认值以防万一
+          color: state.user?.color || '#000000',
+        }));
+      setOnlineUsers(users);
+    };
+
+    awareness.on('change', updateUsers);
+    updateUsers(); // Initial load
+
+    return () => {
+      awareness.off('change', updateUsers);
+    };
+  }, []);
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+      <CssBaseline />
+      <AppHeader onlineUsers={onlineUsers} />
+      <EditorToolbar editor={editor} />
+      <Box sx={{ flexGrow: 1, overflowY: 'auto', backgroundColor: 'background.default', padding: { xs: 2, md: 4 }, display: 'flex', justifyContent: 'center' }}>
+        <Paper elevation={2} sx={{ width: '816px', minHeight: '1122px', padding: { xs: 4, sm: 8, md: 12 }, flexShrink: 0 }}>
+          <TiptapEditor editor={editor} />
+        </Paper>
+      </Box>
+    </Box>
+  );
+}
+
+export default App;
+
+================================================================================
+
+--- FILE: ./client/src/main.tsx ---
+
+// client/src/main.tsx
+import ReactDOM from 'react-dom/client'
+import App from './App.tsx'
+import { ThemeProvider } from '@mui/material/styles';
+import theme from './styles/theme';
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <ThemeProvider theme={theme}>
+    <App />
+  </ThemeProvider>
+)
+
+================================================================================
+
+--- FILE: ./client/src/styles/editor.css ---
+
+/* client/src/styles/editor.css (用户名标签一直可见的版本) */
+
+/* --- Base Editor Styles --- */
+
+.ProseMirror {
+  min-height: 200px;
+  border: 1px solid #ccc;
+  padding: 1rem;
+}
+
+.ProseMirror:focus {
+  outline: none;
+}
+
+.ProseMirror > * + * {
+  margin-top: 0.75em;
+}
+
+/* --- Collaboration Cursor Customization --- */
+
+.collaboration-cursor__caret {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 1px solid var(--collaboration-cursor-color);
+  border-right: 1px solid var(--collaboration-cursor-color);
+  word-break: normal;
+  pointer-events: none;
+}
+
+.collaboration-cursor__label {
+  position: absolute;
+  top: -1.4em;
+  left: -1px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: normal;
+  user-select: none;
+  pointer-events: none;
+  white-space: nowrap;
+
+  color: white;
+  background-color: var(--collaboration-cursor-color);
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+
+  /* 核心修改：让标签一直可见，移除动画 */
+  opacity: 1;
+}
+
+================================================================================
+
+--- FILE: ./client/src/styles/theme.ts ---
+
+// client/src/styles/theme.ts
+import { createTheme } from '@mui/material/styles';
+
+const theme = createTheme({
+  palette: {
+    mode: 'light',
+    primary: {
+      main: '#4285F4', // Google Blue
+    },
+    background: {
+      default: '#F8F9FA', // M3 Surface Container
+      paper: '#FFFFFF',   // M3 Surface
+    },
+    text: {
+      primary: '#1F1F1F',   // M3 On Surface
+      secondary: '#444746', // M3 On Surface Variant
+    },
+    divider: '#C4C7C5', // M3 Outline
+  },
+  typography: {
+    fontFamily: 'Roboto, sans-serif',
+  },
+  shape: {
+    borderRadius: 8, // M3 a'da standart köşe yuvarlaklığı
+  },
+  components: {
+    // MuiToggleButton'ın stillerini özelleştirme
+    MuiToggleButton: {
+      styleOverrides: {
+        root: {
+          '&.Mui-selected': {
+            backgroundColor: 'rgba(66, 133, 244, 0.12)', // Primary color with 12% opacity
+            color: '#0b57d0',
+            '&:hover': {
+              backgroundColor: 'rgba(66, 133, 244, 0.16)',
+            },
+          },
+        },
+      },
+    },
+  },
+});
+
+export default theme;
+
+================================================================================
+
+--- FILE: ./client/src/components/EditorToolbar.tsx ---
+
+// client/src/components/EditorToolbar.tsx
+
+// We no longer need to import React here.
+import { useCallback } from 'react';
+import type { Editor } from '@tiptap/core'; // 1. Import the 'Editor' type from TipTap's core.
+import { Box, IconButton, Divider, ToggleButtonGroup, ToggleButton, Tooltip } from '@mui/material';
+
+// Icon imports remain the same...
+import FormatBoldIcon from '@mui/icons-material/FormatBold';
+import FormatItalicIcon from '@mui/icons-material/FormatItalic';
+import FormatUnderlinedIcon from '@mui/icons-material/FormatUnderlined';
+import FormatStrikethroughIcon from '@mui/icons-material/FormatStrikethrough';
+import LooksOneIcon from '@mui/icons-material/LooksOne';
+import LooksTwoIcon from '@mui/icons-material/LooksTwo';
+import Looks3Icon from '@mui/icons-material/Looks3';
+import FormatListBulletedIcon from '@mui/icons-material/FormatListBulleted';
+import FormatListNumberedIcon from '@mui/icons-material/FormatListNumbered';
+import FormatQuoteIcon from '@mui/icons-material/FormatQuote';
+import CodeIcon from '@mui/icons-material/Code';
+import FormatAlignLeftIcon from '@mui/icons-material/FormatAlignLeft';
+import FormatAlignCenterIcon from '@mui/icons-material/FormatAlignCenter';
+import FormatAlignRightIcon from '@mui/icons-material/FormatAlignRight';
+import LinkIcon from '@mui/icons-material/Link';
+import HorizontalRuleIcon from '@mui/icons-material/HorizontalRule';
+
+// 2. Define the type for our component's props.
+// 'editor' can be null initially while it's loading.
+interface EditorToolbarProps {
+  editor: Editor | null;
+}
+
+const EditorToolbar = ({ editor }: EditorToolbarProps) => {
+  if (!editor) {
+    return null;
+  }
+
+  // The rest of the component logic remains exactly the same...
+  const setLink = useCallback(() => {
+    const previousUrl = editor.getAttributes('link').href;
+    const url = window.prompt('URL', previousUrl);
+    if (url === null) return;
+    if (url === '') {
+      editor.chain().focus().extendMarkRange('link').unsetLink().run();
+      return;
+    }
+    editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+  }, [editor]);
+
+  const activeButtons = [
+    'bold', 'italic', 'underline', 'strike', 
+    'bulletList', 'orderedList', 'blockquote', 'codeBlock'
+  ].filter(type => editor.isActive(type));
+
+  const activeHeading = () => {
+    for (let i = 1; i <= 3; i++) {
+      if (editor.isActive('heading', { level: i })) return `h${i}`;
+    }
+    return '';
+  }
+
+  const activeAlignment = () => {
+    if (editor.isActive({ textAlign: 'center' })) return 'center';
+    if (editor.isActive({ textAlign: 'right' })) return 'right';
+    return 'left';
+  }
+
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        padding: '4px 16px',
+        borderBottom: '1px solid #C4C7C5',
+        backgroundColor: '#FFFFFF',
+        position: 'sticky',
+        top: '64px',
+        zIndex: 10,
+      }}
+    >
+      {/* Heading Group */}
+      <ToggleButtonGroup size="small" value={activeHeading()} exclusive>
+        <Tooltip title="Heading 1"><ToggleButton value="h1" onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}><LooksOneIcon /></ToggleButton></Tooltip>
+        <Tooltip title="Heading 2"><ToggleButton value="h2" onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><LooksTwoIcon /></ToggleButton></Tooltip>
+        <Tooltip title="Heading 3"><ToggleButton value="h3" onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}><Looks3Icon /></ToggleButton></Tooltip>
+      </ToggleButtonGroup>
+      <Divider flexItem orientation="vertical" sx={{ mx: 1, my: 1 }} />
+
+      {/* Basic Formatting Group */}
+      <ToggleButtonGroup size="small" value={activeButtons}>
+        <Tooltip title="Bold (Ctrl+B)"><ToggleButton value="bold" onClick={() => editor.chain().focus().toggleBold().run()}><FormatBoldIcon /></ToggleButton></Tooltip>
+        <Tooltip title="Italic (Ctrl+I)"><ToggleButton value="italic" onClick={() => editor.chain().focus().toggleItalic().run()}><FormatItalicIcon /></ToggleButton></Tooltip>
+        <Tooltip title="Underline (Ctrl+U)"><ToggleButton value="underline" onClick={() => editor.chain().focus().toggleUnderline().run()}><FormatUnderlinedIcon /></ToggleButton></Tooltip>
+        <Tooltip title="Strikethrough"><ToggleButton value="strike" onClick={() => editor.chain().focus().toggleStrike().run()}><FormatStrikethroughIcon /></ToggleButton></Tooltip>
+      </ToggleButtonGroup>
+      <Divider flexItem orientation="vertical" sx={{ mx: 1, my: 1 }} />
+      
+      {/* Alignment Group */}
+      <ToggleButtonGroup size="small" value={activeAlignment()} exclusive>
+        <Tooltip title="Align Left"><ToggleButton value="left" onClick={() => editor.chain().focus().setTextAlign('left').run()}><FormatAlignLeftIcon /></ToggleButton></Tooltip>
+        <Tooltip title="Align Center"><ToggleButton value="center" onClick={() => editor.chain().focus().setTextAlign('center').run()}><FormatAlignCenterIcon /></ToggleButton></Tooltip>
+        <Tooltip title="Align Right"><ToggleButton value="right" onClick={() => editor.chain().focus().setTextAlign('right').run()}><FormatAlignRightIcon /></ToggleButton></Tooltip>
+      </ToggleButtonGroup>
+      <Divider flexItem orientation="vertical" sx={{ mx: 1, my: 1 }} />
+
+      {/* Block Formatting Group */}
+      <ToggleButtonGroup size="small" value={activeButtons}>
+        <Tooltip title="Bullet List"><ToggleButton value="bulletList" onClick={() => editor.chain().focus().toggleBulletList().run()}><FormatListBulletedIcon /></ToggleButton></Tooltip>
+        <Tooltip title="Numbered List"><ToggleButton value="orderedList" onClick={() => editor.chain().focus().toggleOrderedList().run()}><FormatListNumberedIcon /></ToggleButton></Tooltip>
+        <Tooltip title="Blockquote"><ToggleButton value="blockquote" onClick={() => editor.chain().focus().toggleBlockquote().run()}><FormatQuoteIcon /></ToggleButton></Tooltip>
+        <Tooltip title="Code Block"><ToggleButton value="codeBlock" onClick={() => editor.chain().focus().toggleCodeBlock().run()}><CodeIcon /></ToggleButton></Tooltip>
+      </ToggleButtonGroup>
+      <Divider flexItem orientation="vertical" sx={{ mx: 1, my: 1 }} />
+
+      {/* Special Elements Group */}
+      <Tooltip title="Insert/Edit Link">
+        <IconButton onClick={setLink}>
+          <LinkIcon />
+        </IconButton>
+      </Tooltip>
+      <Tooltip title="Horizontal Rule">
+        <IconButton onClick={() => editor.chain().focus().setHorizontalRule().run()}>
+          <HorizontalRuleIcon />
+        </IconButton>
+      </Tooltip>
+    </Box>
+  );
+};
+
+export default EditorToolbar;
+
+================================================================================
+
+--- FILE: ./client/src/components/TiptapEditor.tsx ---
+
+// client/src/components/TiptapEditor.tsx
+
+import { EditorContent } from '@tiptap/react';
+import React from 'react';
+
+// 接收一个 editor 对象作为 prop
+const TiptapEditor = ({ editor }) => {
+  // 我们不再需要在这里使用 useEditor Hook
+  return (
+    <EditorContent editor={editor} />
+  );
+};
+
+export default TiptapEditor;
+
+================================================================================
+
+--- FILE: ./client/src/components/AppHeader.tsx ---
+
+// client/src/components/AppHeader.tsx
+
+import { AppBar, Toolbar, Typography, Box, Avatar, Tooltip } from '@mui/material';
+
+// 1. 定义与 App.tsx 一致的用户接口
+interface OnlineUser {
+  id: number;
+  name: string;
+  color: string;
+}
+
+interface AppHeaderProps {
+  onlineUsers: OnlineUser[];
+}
+
+const AppHeader = ({ onlineUsers }: AppHeaderProps) => {
+  return (
+    <AppBar
+      position="sticky"
+      elevation={0}
+      sx={{
+        backgroundColor: 'background.paper',
+        borderBottom: '1px solid',
+        borderColor: 'divider',
+      }}
+    >
+      <Toolbar sx={{ height: '64px' }}>
+        <Typography variant="h6" component="div" sx={{ flexGrow: 1, fontWeight: 400, fontSize: '22px' }}>
+          SDG-Docs
+        </Typography>
+        
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {onlineUsers.map((user) => (
+            // 2. 使用 user.id, user.name, 和 user.color
+            <Tooltip key={user.id} title={user.name}>
+              <Avatar sx={{ bgcolor: user.color, width: 32, height: 32, fontSize: '16px' }}>
+                {user.name.charAt(0).toUpperCase()}
+              </Avatar>
+            </Tooltip>
+          ))}
+        </Box>
+      </Toolbar>
+    </AppBar>
+  );
+};
+
+export default AppHeader;
+
+================================================================================
+
+--- FILE: ./client/src/components/PresenceAvatars.tsx ---
+
+
+
+================================================================================
+
+--- FILE: ./client/src/lib/yjs.ts ---
+
+// client/src/lib/yjs.ts (最终稳定版)
+import * as Y from 'yjs';
+import { WebsocketProvider } from 'y-websocket';
+
+export const ydoc = new Y.Doc();
+
+export const provider = new WebsocketProvider(
+  'ws://localhost:1234',
+  'sdg-docs-room-final',
+  ydoc
+);
+
+================================================================================
+

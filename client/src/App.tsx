@@ -1,100 +1,103 @@
-// client/src/App.tsx (最终、完整、稳定版 V2)
+// client/src/App.tsx
+import { useState, useEffect, useRef } from 'react';
+import { CssBaseline } from '@mui/material';
+import { AuthPage } from './pages/Auth';
+import { RoomSelectPage } from './pages/RoomSelect';
+import { EditorPage } from './pages/EditorPage';
 
-import { useState, useEffect } from 'react';
-import { Box, CssBaseline, Paper } from '@mui/material';
-import AppHeader from './components/AppHeader';
-import EditorToolbar from './components/EditorToolbar';
-import TiptapEditor from './components/TiptapEditor';
-import './styles/editor.css';
+import * as Y from 'yjs';
+import { WebsocketProvider } from 'y-websocket';
 
-import { ydoc, provider } from './lib/yjs';
+// 定义用户和状态的类型
+type User = { name: string; color: string; };
+type OnlineUser = { name: string; color: string; };
 
-// TipTap and Y.js imports
-import { useEditor } from '@tiptap/react';
-import { StarterKit } from '@tiptap/starter-kit';
-import Collaboration from '@tiptap/extension-collaboration';
-import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
-import Underline from '@tiptap/extension-underline';
-import TextAlign from '@tiptap/extension-text-align';
-import Link from '@tiptap/extension-link';
-
-// 1. 定义统一的用户接口
-interface OnlineUser {
-  id: number;
-  name: string;
-  color: string;
-}
-
-// Helper functions for user simulation
-const userColors = ['#F44336', '#9C27B0', '#3F51B5', '#03A9F4', '#009688', '#8BC34A', '#FFC107', '#FF5722'];
-const userNames = ['Alex', 'Jordan', 'Taylor', 'Morgan', 'Casey', 'Jamie', 'Riley', 'Peyton'];
-const getRandomElement = (list: string[]) => list[Math.floor(Math.random() * list.length)];
-
-// 2. 创建当前用户时，也遵循这个接口 (id 是 Y.js 内部的 clientID，会自动分配)
-const currentUser = {
-  name: getRandomElement(userNames),
-  color: getRandomElement(userColors),
-};
+const WS_URL = 'ws://localhost:1234';
 
 function App() {
+  // 全局状态
+  const [username, setUsername] = useState<string | null>(null);
+  const [roomName, setRoomName] = useState<string | null>(null);
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
+  
+  // Y.js 和 WebSocket 的实例
+  const ydocRef = useRef<Y.Doc | null>(null);
+  const providerRef = useRef<WebsocketProvider | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const currentUserRef = useRef<User | null>(null);
 
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({ history: false }),
-      Underline,
-      TextAlign.configure({ types: ['heading', 'paragraph'] }),
-      Link.configure({ openOnClick: true, autolink: true }),
-      Collaboration.configure({ document: ydoc }),
-      CollaborationCursor.configure({
-        provider: provider,
-        user: currentUser,
-      }),
-    ],
-    editorProps: {
-        attributes: {
-          class: 'prosemirror',
-        },
-      },
-  });
-
-  // 这个 useEffect 现在会生成正确格式的用户列表
   useEffect(() => {
-    if (!provider) return;
-    const awareness = provider.awareness;
+    // 建立一个通用的 WebSocket 连接用于业务逻辑
+    const ws = new WebSocket(WS_URL);
+    wsRef.current = ws;
 
-    const updateUsers = () => {
-      // awareness.getStates() 返回一个 Map(clientID => state)
-      const states = Array.from(awareness.getStates().entries());
-      const users: OnlineUser[] = states
-        // 3. 将 [clientID, state] 映射为 { id, name, color } 的标准格式
-        .map(([clientID, state]) => ({
-          id: clientID,
-          name: state.user?.name || 'Anonymous', // 添加默认值以防万一
-          color: state.user?.color || '#000000',
-        }));
-      setOnlineUsers(users);
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'auth_success') {
+        setUsername(data.username);
+      } else if (data.type === 'auth_failed') {
+        alert(data.message);
+      } else if (data.type === 'user_list_update') {
+        setOnlineUsers(data.users);
+      }
     };
-
-    awareness.on('change', updateUsers);
-    updateUsers(); // Initial load
-
+    
     return () => {
-      awareness.off('change', updateUsers);
+      ws.close();
     };
   }, []);
 
+  const handleAuth = (type: 'login' | 'register', user, pass) => {
+    wsRef.current?.send(JSON.stringify({
+      type: 'auth',
+      payload: { action: type, username: user, password: pass },
+    }));
+  };
+
+  const handleJoinRoom = (room) => {
+    // 随机生成当前用户的信息
+    const userColors = ['#F44336', '#9C27B0', '#3F51B5', '#03A9F4'];
+    const color = userColors[Math.floor(Math.random() * userColors.length)];
+    currentUserRef.current = { name: username!, color };
+
+    // 创建 Y.js 文档和 Provider
+    const ydoc = new Y.Doc();
+    const provider = new WebsocketProvider(WS_URL, room, ydoc);
+    
+    // Y.js 的 awareness 协议用于同步光标等瞬时状态
+    provider.awareness.setLocalStateField('user', currentUserRef.current);
+    
+    ydocRef.current = ydoc;
+    providerRef.current = provider;
+
+    setRoomName(room);
+
+    // 发送加入房间的业务消息
+    wsRef.current?.send(JSON.stringify({
+      type: 'joinRoom',
+      payload: { roomName: room },
+    }));
+  };
+  
+  // 根据应用状态决定渲染哪个页面
+  if (!username) {
+    return <AuthPage onAuth={handleAuth} />;
+  }
+  
+  if (!roomName) {
+    return <RoomSelectPage username={username} onJoinRoom={handleJoinRoom} />;
+  }
+
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <>
       <CssBaseline />
-      <AppHeader onlineUsers={onlineUsers} />
-      <EditorToolbar editor={editor} />
-      <Box sx={{ flexGrow: 1, overflowY: 'auto', backgroundColor: 'background.default', padding: { xs: 2, md: 4 }, display: 'flex', justifyContent: 'center' }}>
-        <Paper elevation={2} sx={{ width: '816px', minHeight: '1122px', padding: { xs: 4, sm: 8, md: 12 }, flexShrink: 0 }}>
-          <TiptapEditor editor={editor} />
-        </Paper>
-      </Box>
-    </Box>
+      <EditorPage
+        ydoc={ydocRef.current}
+        provider={providerRef.current}
+        currentUser={currentUserRef.current}
+        onlineUsers={onlineUsers}
+      />
+    </>
   );
 }
 
